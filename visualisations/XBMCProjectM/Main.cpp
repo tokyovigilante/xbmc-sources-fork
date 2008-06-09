@@ -33,8 +33,8 @@ d4rk@xboxmediacenter.com
 
 */
 
-#include "../../guilib/system.h"
-#include "../xbmc_vis.h"
+
+#include "xbmc_vis.h"
 #ifdef HAS_SDL_OPENGL
 #include <GL/glew.h>
 #endif
@@ -44,19 +44,20 @@ d4rk@xboxmediacenter.com
 #include <string>
 #ifdef _WIN32PC
 #include "libprojectM/win32-dirent.h"
+#include <io.h>
 #else
+#include "system.h"
+#include "Util.h"
 #include <dirent.h>
 #endif
 
-#define CONFIG_FILE "/config"
 #ifdef _WIN32PC
 #define PRESETS_DIR "visualisations\\projectM"
-#define FONTS_DIR "fonts"
+#define CONFIG_FILE "visualisations\\projectM.conf"
 #else
-#define PRESETS_DIR "/visualisations/projectM"
-#define FONTS_DIR "/fonts"
+#define PRESETS_DIR "Q:/visualisations/projectM"
+#define CONFIG_FILE "P:/visualisations/projectM.conf"
 #endif
-#define PROJECTM_DATADIR "userdata"
 
 projectM *globalPM = NULL;
 extern int preset_index;
@@ -78,6 +79,8 @@ void* g_device;
 float g_fWaveform[2][512];
 char **g_presets=NULL;
 int g_numPresets = 0;
+
+std::string configFile;
 
 
 // Some helper Functions
@@ -122,22 +125,13 @@ extern "C" void Create(void* pd3dDevice, int iPosX, int iPosY, int iWidth, int i
 
   /** Initialise projectM */
 
-  char *rootdir = getenv("XBMC_HOME");
-  if (rootdir==NULL)
-  {
-    rootdir = ".";
-  }
-
-  std::string fontsDir;
-  fontsDir = string(rootdir) + PATH_SEPARATOR + string(PROJECTM_DATADIR) + string(FONTS_DIR);
-  fprintf(stderr, "ProjectM Fonts Dir: %s\n", fontsDir.c_str());
-
-  std::string presetsDir;
-  presetsDir = string(rootdir) + PATH_SEPARATOR + string(PRESETS_DIR);;
-  fprintf(stderr, "ProjectM Presets Dir: %s", presetsDir.c_str());
-
-  std::string configFile;
-  configFile = string(rootdir) + PATH_SEPARATOR + string(PRESETS_DIR) + PATH_SEPARATOR + "config.inp";
+#ifdef _WIN32PC
+  std::string presetsDir = string(getenv("XBMC_HOME")) + "\\" + PRESETS_DIR;
+  configFile = string(getenv("XBMC_PROFILE_USERDATA")) + "\\" + CONFIG_FILE;
+#else
+  std::string presetsDir = _P(PRESETS_DIR);
+  configFile = _P(CONFIG_FILE);
+#endif
 
   projectM::Settings configPM;
   configPM.meshX = gx;
@@ -147,8 +141,6 @@ extern "C" void Create(void* pd3dDevice, int iPosX, int iPosY, int iWidth, int i
   configPM.windowWidth = iWidth;
   configPM.windowHeight = iHeight;
   configPM.presetURL = presetsDir;
-  configPM.titleFontURL = fontsDir;
-  configPM.menuFontURL = fontsDir;
   configPM.smoothPresetDuration = 5;
   configPM.presetDuration = 15;
   configPM.beatSensitivity = 10.0;
@@ -156,12 +148,27 @@ extern "C" void Create(void* pd3dDevice, int iPosX, int iPosY, int iWidth, int i
   configPM.easterEgg = 0.0;
   configPM.shuffleEnabled = true;
 
-  projectM::writeConfig(configFile, configPM);
-  
+  // workaround: projectM crashes without configFile and 
+  // fstream won't create it
+  FILE *f = fopen(configFile.c_str(), "r");
+  if (f)
+    fclose(f);
+  else
+  {
+    f = fopen(configFile.c_str(), "w");
+    if (f)
+      fclose(f);
+    projectM::writeConfig(configFile, configPM);
+  }
+
   if (globalPM)
     delete globalPM;
 
   globalPM = new projectM(configFile);
+
+  VisSetting setting(VisSetting::CHECK, "Shuffle Mode");
+  setting.current = globalPM->isShuffleEnabled();
+  m_vecSettings.push_back(setting);
 
   g_Width = iWidth;
   g_Height = iHeight;
@@ -184,6 +191,7 @@ extern "C" void Stop()
 {
   if (globalPM) 
   {
+    projectM::writeConfig(configFile,globalPM->settings());
     delete globalPM;
     globalPM = NULL;
   }
@@ -212,8 +220,7 @@ extern "C" void AudioData(short* pAudioData, int iAudioDataLength, float *pFreqD
 // Called once per frame. Do all rendering here.
 //-----------------------------------------------------------------------------
 extern "C" void Render()
-{ 
-
+{
   glClearColor(0,0,0,0);
 
   glMatrixMode(GL_TEXTURE);
@@ -308,9 +315,10 @@ extern "C" void GetPresets(char ***pPresets, int *currentPreset, int *numPresets
   if (!g_presets)
   {
     struct dirent** entries;
-    fprintf(stderr, "Preset Dir: %s\n", globalPM->getPresetURL(0).c_str());
-    int dir_size = scandir(globalPM->getPresetURL(0).c_str(), &entries,
+    fprintf(stderr, "Preset Dir: %s\n",globalPM->settings().presetURL.c_str());
+    int dir_size = scandir(globalPM->settings().presetURL.c_str(), &entries,
                            check_valid_extension, alphasort);
+
     if (dir_size>0)
     {
       g_numPresets = dir_size;
@@ -359,4 +367,6 @@ extern "C" void UpdateSetting(int num)
   VisSetting &setting = m_vecSettings[num];
   if (strcasecmp(setting.name, "Use Preset")==0)
     OnAction(34, (void*)&setting.current);
+  else if (strcasecmp(setting.name, "Shuffle Mode")==0)
+    OnAction(VIS_ACTION_RANDOM_PRESET, (void*)&setting.current);
 }
