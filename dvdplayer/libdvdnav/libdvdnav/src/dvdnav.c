@@ -1136,8 +1136,6 @@ user_ops_t dvdnav_get_restrictions(dvdnav_t* this) {
   return ops.ops_struct;
 }
 
-#ifdef _XBOX
-
 vm_t* dvdnav_get_vm(dvdnav_t *this) {
   if(!this) return 0;
   return this->vm;
@@ -1392,6 +1390,4 @@ void dvdnav_unlock(dvdnav_t *self)
 	// we do not check for null pointer problems
 	pthread_mutex_unlock(&self->vm_lock);
 }
-
-#endif // _XBOX
 

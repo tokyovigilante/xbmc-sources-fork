@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <string.h>
 
 #include "dvd_reader.h"
 #include "dvd_input.h"
@@ -286,9 +287,20 @@ int dvdinput_setup(void)
 
 #else
   /* dlopening libdvdcss */
-
+  
 #ifndef WIN32
+#ifdef __APPLE__
+  char strPath[2048];
+  strcpy(strPath, getenv("XBMC_HOME"));
+  if (strPath[strlen(strPath)-1] != '/')
+      strcat(strPath, "/");
+  //strcat(strPath, "system/players/dvdplayer/libdvdcss.so.2");
+  strcat(strPath, "system/players/dvdplayer/libdvdnav-osx.so");
+  dvdcss_library = dlopen(strPath, RTLD_LAZY);
+#else
   dvdcss_library = dlopen("libdvdcss.so.2", RTLD_LAZY);
+#endif
+  printf("Loading libDVDCSS...0x%08lx\n", dvdcss_library);
 #else
   dvdcss_library = dlopen("libdvdcss.dll", RTLD_LAZY);
 #endif

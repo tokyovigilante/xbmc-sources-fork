@@ -35,7 +35,14 @@
 #include <sys/param.h>
 #endif
 
-#if defined(__linux__)
+#if defined(__APPLE__)
+#define	bswap_16(value) ((((value) & 0xff) << 8) | ((value) >> 8))
+#define	bswap_32(value)	(((uint32_t)bswap_16((uint16_t)((value) & 0xffff)) << 16) | (uint32_t)bswap_16((uint16_t)((value) >> 16)))
+#define	bswap_64(value)	(((uint64_t)bswap_32((uint32_t)((value) & 0xffffffff)) << 32) | (uint64_t)bswap_32((uint32_t)((value) >> 32)))
+#define B2N_16(x) x = bswap_16(x)
+#define B2N_32(x) x = bswap_32(x)
+#define B2N_64(x) x = bswap_64(x)
+#elif defined(__linux__)
 #include <byteswap.h>
 #define B2N_16(x) x = bswap_16(x)
 #define B2N_32(x) x = bswap_32(x)
