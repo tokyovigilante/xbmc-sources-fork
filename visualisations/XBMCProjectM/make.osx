@@ -1,0 +1,9 @@
+#!/bin/sh
+cd libprojectM
+cmake -D CMAKE_BUILD_TYPE:STRING=RelWithDebInfo -D USE_FTGL:BOOL=OFF -D CMAKE_CXX_FLAGS:STRING="-I/opt/local/include -I/System/Library/Frameworks/AGL.framework/Versions/A/Headers/ -I/usr/X11/include/" -D CMAKE_C_FLAGS:STRING="-I/opt/local/include -I/System/Library/Frameworks/AGL.framework/Versions/A/Headers/ -I/usr/X11/include/" -D CMAKE_SHARED_LINKER_FLAGS:STRING="-L/opt/local/lib -framework OpenGL -framework CoreFoundation" .
+make
+cd ..
+gcc -DHAS_SDL_OPENGL -D_LINUX -c Main.cpp -I ~/Code/C++/Eclipse/XBMC-Fork/visualisations/ -I ~/Code/C++/Eclipse/XBMC-Fork/xbmc -I ~/Code/C++/Eclipse/XBMC-Fork/guilib/ -I ~/Code/C++/Eclipse/XBMC-Fork/xbmc/linux/ -I/opt/local/include
+gcc -bundle -flat_namespace -undefined suppress -o ProjectM.vis libprojectM/CMakeFiles/projectM.dir/*.o Main.o
+~/Code/Ruby/mach5/mach5.rb ProjectM.vis
+mv output.so ~/Code/C++/Eclipse/OSXBMC.app/Contents/Resources/XBMC/visualisations/ProjectM.vis

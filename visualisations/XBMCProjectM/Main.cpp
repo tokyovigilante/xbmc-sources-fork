@@ -62,14 +62,14 @@ extern int preset_index;
 
 int maxSamples=512;
 
-int texsize=1024;
+int texsize=512;
 //int gx=32,gy=24;
 int gx=40,gy=30;
 int wvw=640,wvh=480;
 int fvw=1280,fvh=960;
 int g_Width=0, g_Height=0;
 int g_PosX=0, g_PosY=0;
-int fps=200, fullscreen=0;
+int fps=60, fullscreen=0;
 char *disp;
 
 char g_visName[512];

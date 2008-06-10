@@ -1,0 +1,14 @@
+INCLUDES=-I. -I.. -I/Users/elan/Code/C++/Eclipse/XBMC-Fork/xbmc/linux -I/Users/elan/Code/C++/Eclipse/XBMC-Fork/xbmc -I/Users/elan/Code/C++/Eclipse/XBMC-Fork/guilib -I/Users/elan/Code/C++/Eclipse/XBMC-Fork/visualisations
+SRCS=Main.cpp
+LIB=ProjectM.vis
+CFLAGS=-O3 -g -DLINUX
+DEFINES+=-D_LINUX -D_FILE_DEFINED -D_REENTRANT -D_LARGEFILE64_SOURCE -D_FILE_OFFSET_BITS=64 
+
+default: vis
+
+#include ../../../XBMC/Makefile.include
+
+vis: Main.o
+	(unset CC; unset CXX; cd libprojectM; cmake -D CMAKE_BUILD_TYPE:STRING=RelWithDebInfo -D USE_FTGL:BOOL=OFF -D CMAKE_CXX_FLAGS:STRING=-I/opt/local/include -I/System/Library/Frameworks/AGL.framework/Versions/A/Headers/ -I/usr/X11/include/ -D CMAKE_C_FLAGS:STRING=-I/opt/local/include -I/System/Library/Frameworks/AGL.framework/Versions/A/Headers/ -I/usr/X11/include/ -D CMAKE_EXE_LINKER_FLAGS:STRING=-L/opt/local/lib/ -D CMAKE_EXE_LINKER_FLAGS_RELEASE:STRING=-L/opt/local/lib/ .;)
+	$(MAKE) -C libprojectM
+	$(CXX) ./libprojectM/CMakeFiles/projectM.dir/*.o -bundle -flat_namespace -undefined suppress -shared $(CFLAGS) -o $(LIB) $(OBJS) `cat ../../../XBMC/xbmc/cores/DllLoader/exports/wrapper.def` ../../../XBMC/xbmc/cores/DllLoader/exports/wrapper.o

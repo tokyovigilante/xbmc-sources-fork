@@ -34,7 +34,7 @@
 #include "PCM.hpp"
 #include <cassert>
 
-int PCM::maxsamples = 2048;
+int PCM::maxsamples = 512;
 
 //initPCM(int samples)
 //

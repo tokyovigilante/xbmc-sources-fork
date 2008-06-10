@@ -99,7 +99,7 @@ RenderTarget::RenderTarget(int texsize, int width, int height) : useFBO(false) {
     { 
       glewInit();
       
-      if(glewIsSupported("GL_EXT_framebuffer_object"))
+      if(0 && glewIsSupported("GL_EXT_framebuffer_object"))
 	{	 
 
 	  GLuint   fb,  depth_rb, rgba_tex,  other_tex;
