@@ -28,14 +28,16 @@
 
 #include <stdlib.h>
 #include <stdio.h>
-
+#include <math.h>
 #include "wipemalloc.h"
 
 #include "Common.hpp"
 #include "projectM.hpp"
 #include "BeatDetect.hpp"
 #include "PCM.hpp"
+#ifndef __APPLE__
 #include <cmath>
+#endif
 
 DLLEXPORT BeatDetect::BeatDetect(PCM *pcm) {
   int x,y; 

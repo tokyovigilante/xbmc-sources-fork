@@ -96,7 +96,11 @@ int alphasort(const void* lhs, const void* rhs)
 #endif
 
 // check for a valid preset extension
+#ifndef __APPLE__
 int check_valid_extension(const struct dirent* ent) 
+#else
+int check_valid_extension(struct dirent* ent) 
+#endif
 {
   const char* ext = 0;
   

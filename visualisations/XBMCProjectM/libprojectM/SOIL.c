@@ -1443,7 +1443,6 @@ int query_DXT_capability( void )
 
 			
 				CFRelease( bundleURL );
-				CFRelease( functionName );
 				CFRelease( bundle );
 			#else
 				 ext_addr = (P_SOIL_GLCOMPRESSEDTEXIMAGE2DPROC)

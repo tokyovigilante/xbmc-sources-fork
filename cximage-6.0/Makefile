@@ -1,7 +1,7 @@
 DIRS=CxImage raw jbig tiff
 
 ImageLib.so: compile
-	gcc -bundle -flat_namespace -undefined suppress -shared -o ImageLib-osx.so CxImage/*.o jasper/*/*.o jbig/*.o jpeg/*.o png/*.o raw/*.o tiff/*.o
+	gcc -bundle -flat_namespace -undefined suppress -shared -o ImageLib-osx.so CxImage/*.o jasper/*/*.o jbig/*.o jpeg/*.o png/*.o raw/*.o tiff-3.8.2/libtiff/*.o
 
 compile:
 	$(MAKE) -C CxImage -fMakefile
