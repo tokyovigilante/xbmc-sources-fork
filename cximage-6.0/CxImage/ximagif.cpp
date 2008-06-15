@@ -33,9 +33,12 @@ bool CxImageGIF::Decode(CxFile *fp)
 	//if (strncmp(dscgif.header,"GIF8",3)!=0) {
 	if (strncmp(dscgif.header,"GIF8",4)!=0) return FALSE;
 
+#ifndef __APPLE__
 	// Avoid Byte order problem with Mac <AMSN>
+	// THIS CAUSES PROBLEMS ON THE MAC: ESF
 	dscgif.scrheight = ntohs(dscgif.scrheight);
 	dscgif.scrwidth = ntohs(dscgif.scrwidth);
+#endif
 
 	if (info.nEscape == -1) {
 		// Return output dimensions only
@@ -96,10 +99,12 @@ bool CxImageGIF::Decode(CxFile *fp)
 				assert(sizeof(image) == 9);
 				fp->Read(&image,sizeof(image),1);
 				//avoid byte order problems with Solaris <candan> <AMSN>
+#if 0
 				image.l = ntohs(image.l);
 				image.t = ntohs(image.t);
 				image.w = ntohs(image.w);
 				image.h = ntohs(image.h);
+#endif
 
 				if (((image.l + image.w) > dscgif.scrwidth)||((image.t + image.h) > dscgif.scrheight))
 					break;
@@ -305,7 +310,7 @@ bool CxImageGIF::DecodeExtension(CxFile *fp)
 			if (bContinue) {
 				assert(sizeof(gifgce) == 4);
 				bContinue = (count == fp->Read(&gifgce, 1, sizeof(gifgce)));
-				gifgce.delaytime = ntohs(gifgce.delaytime); // Avoid Byte order problem with Mac <AMSN>
+				gifgce.delaytime = gifgce.delaytime; // Avoid Byte order problem with Mac <AMSN>
 				if (bContinue) {
 					info.nBkgndIndex  = (gifgce.flags & 0x1) ? gifgce.transpcolindex : -1;
 					info.dwFrameDelay = gifgce.delaytime;
@@ -563,10 +568,10 @@ void CxImageGIF::EncodeExtension(CxFile *fp)
 	gifgce.transpcolindex = (BYTE)info.nBkgndIndex;	   
 
 	//Invert byte order in case we use a byte order arch, then set it back <AMSN>
-	gifgce.delaytime = ntohs(gifgce.delaytime);
+	gifgce.delaytime = gifgce.delaytime;
 	fp->PutC(sizeof(gifgce));
 	fp->Write(&gifgce, sizeof(gifgce), 1);
-	gifgce.delaytime = ntohs(gifgce.delaytime);
+	gifgce.delaytime = gifgce.delaytime;
 
 	fp->PutC(0);
 	// TRK END
@@ -1249,11 +1254,15 @@ int CxImageGIF::get_num_frames(CxFile *fp,struct_TabCol* TabColSrc,struct_dscgif
 				//log << "Image header" << endl;
 				fp->Read(&image,sizeof(image),1);
 
+#if 0
+        // What the fuck is this person doing, GIF order is litle endian.
+
 				//avoid byte order problems with Solaris <candan> <AMSN>
 				image.l = ntohs(image.l);
 				image.t = ntohs(image.t);
 				image.w = ntohs(image.w);
 				image.h = ntohs(image.h);
+#endif
 
 				// in case of images with empty screen descriptor, give a last chance
 				if (dscgif->scrwidth==0 && dscgif->scrheight==0){
