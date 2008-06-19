@@ -1,0 +1,20 @@
+SRCS = src/MACDll/MACDll.cpp src/MACLib/APETag.cpp src/MACLib/MACLib.cpp src/MACLib/APEInfo.cpp src/MACLib/APECompress.cpp src/MACLib/APEDecompress.cpp src/MACLib/APELink.cpp src/MACLib/APEHeader.cpp src/Shared/StdLibFileIO.cpp src/Shared/CharacterHelper.cpp src/MACLib/APECompressCreate.cpp src/Shared/CircleBuffer.cpp src/MACLib/BitArray.cpp src/MACLib/APECompressCore.cpp src/MACLib/Prepare.cpp src/MACLib/UnBitArrayBase.cpp src/MACLib/NewPredictor.cpp src/MACLib/NNFilter.cpp src/MACLib/UnBitArray.cpp src/MACLib/MD5.cpp src/MACLib/Assembly/common.cpp src/Shared/MACUtils.cpp
+
+OBJS = src/MACDll/MACDll.o src/MACLib/APETag.o src/MACLib/MACLib.o src/MACLib/APEInfo.o src/MACLib/APELink.o src/MACLib/APECompress.o src/MACLib/APEDecompress.o src/MACLib/APEHeader.o src/Shared/StdLibFileIO.o src/Shared/CharacterHelper.o src/MACLib/APECompressCreate.o src/Shared/CircleBuffer.o src/MACLib/BitArray.o src/MACLib/APECompressCore.o src/MACLib/Prepare.o src/MACLib/UnBitArrayBase.o src/MACLib/NewPredictor.o src/MACLib/NNFilter.o src/MACLib/UnBitArray.o src/MACLib/MD5.o src/MACLib/Assembly/common.o src/Shared/MACUtils.o
+
+CPPFLAGS = -O2 -g -DHAVE_CONFIG_H -fno-common -mstackrealign -I src/shared -I src/MAClib
+
+MACDll-osx.so : $(OBJS)
+	gcc -bundle -flat_namespace -undefined suppress -o MACDll-osx.so $(OBJS)
+	
+.PHONY : clean
+clean :
+	rm -f MACDll-osx.so $(OBJS)
+
+.PHONY: depend
+depend: 
+	@makedepend –f $(SRCS)
+
+include $(DEPENDS)
+
+# DO NOT DELETE

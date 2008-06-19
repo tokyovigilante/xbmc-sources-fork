@@ -1,0 +1,3 @@
+#!/bin/sh
+make -f Makefile.osx
+~/Code/ruby/mach5/mach5.rb MACDll-osx.so; chmod +x output.so; mv output.so ~/Code/C++/Eclipse/OSXBMC.app/Contents/Resources/XBMC/system/players/paplayer/MACDll-osx.so
