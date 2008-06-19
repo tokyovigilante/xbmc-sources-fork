@@ -113,6 +113,12 @@ static char* _select_font(fc_instance_t* priv, const char* family, unsigned bold
 
 	fset = FcFontSort(priv->config, pat, FcTrue, NULL, &result);
 
+    if (fset == 0)
+    {
+        printf("No result from sort for family [%s]\n", family);
+        goto error;
+    }
+
 	for (curf = 0; curf < fset->nfont; ++curf) {
 		rpat = fset->fonts[curf];
 		
