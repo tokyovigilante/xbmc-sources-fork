@@ -137,6 +137,9 @@ const char *PaMacCore_GetChannelName( int device, int channelIndex, bool input )
  * causes the stream opening to fail, unless the exact sample rates
  * are supported by the device. */
 #define paMacCoreFailIfConversionRequired (0x02)
+/* causes stream to be treated as raw spdif
+ */
+#define paMacCoreFlagRaw (0x04)
 
 /* These flags set the SR conversion quality, if required. The wierd ordering
  * allows Maximum Quality to be the default.*/

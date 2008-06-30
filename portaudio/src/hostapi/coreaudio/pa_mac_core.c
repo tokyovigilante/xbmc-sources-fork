@@ -275,6 +275,16 @@ static PaError OpenAndSetupOneAudioUnit(
                                    const double sampleRate,
                                    void *refCon );
 
+/* RenderCallbackSPDIF: callback for SPDIF audio output */
+static OSStatus RenderCallbackSPDIF( AudioDeviceID inDevice,
+                                    const AudioTimeStamp * inNow,
+                                    const void * inInputData,
+                                    const AudioTimeStamp * inInputTime,
+                                    AudioBufferList * outOutputData,
+                                    const AudioTimeStamp * inOutputTime,
+                                    void * threadGlobals );
+static PaTime TimeStampToSecs(PaMacCoreStream *stream, const AudioTimeStamp* timeStamp);
+
 /* for setting errors. */
 #define PA_AUHAL_SET_LAST_HOST_ERROR( errorCode, errorText ) \
     PaUtil_SetLastHostErrorInfo( paInDevelopment, errorCode, errorText )
@@ -786,6 +796,475 @@ static PaError IsFormatSupported( struct PaUtilHostApiRepresentation *hostApi,
 
     return paFormatIsSupported;
 }
+
+/*****************************************************************************
+* StreamListener - Called when the stream change that we requested is
+                   actually performed; so we notify through cv.
+*****************************************************************************/
+static OSStatus StreamListener( AudioStreamID inStream,
+                                UInt32 inChannel,
+                                AudioDevicePropertyID inPropertyID,
+                                void * inClientData )
+{
+    OSStatus err = noErr;
+    struct { pthread_mutex_t lock; pthread_cond_t cond; } * w = inClientData;
+
+    switch( inPropertyID )
+    {
+        case kAudioStreamPropertyPhysicalFormat:
+            pthread_mutex_lock(   &w->lock );
+            pthread_cond_signal(  &w->cond );
+            pthread_mutex_unlock( &w->lock );
+            break;
+
+        default:
+            break;
+    }
+    return( err );
+}
+
+
+/*****************************************************************************
+ * AudioStreamChangeFormat: Change i_stream_id to change_format
+ *****************************************************************************/
+static int AudioStreamChangeFormat( AudioStreamID i_stream_id, AudioStreamBasicDescription change_format )
+{
+    OSStatus            err = noErr;
+    UInt32              i_param_size = 0;
+    int i;
+
+    struct timeval now;
+    struct timespec timeout;
+    struct { pthread_mutex_t lock; pthread_cond_t cond; } w;
+    
+    VVDBUG(( "setting stream format\n" ));
+    //msg_Dbg( p_aout, STREAM_FORMAT_MSG( "setting stream format: ", change_format ) );
+
+    /* Condition because SetProperty is asynchronious */ 
+    pthread_cond_init(  &w.cond, NULL );
+    pthread_mutex_init( &w.lock, NULL );
+    pthread_mutex_lock( &w.lock );
+
+    /* Install the callback */
+    err = AudioStreamAddPropertyListener( i_stream_id, 0,
+                                          kAudioStreamPropertyPhysicalFormat,
+                                          StreamListener, (void *)&w );
+    if( err != noErr )
+    {
+        VVDBUG(( "AudioStreamAddPropertyListener failed: [%d]\n", err ));
+        //msg_Err( p_aout, "AudioStreamAddPropertyListener failed: [%4.4s]", (char *)&err );
+        return FALSE;
+    }
+
+    /* change the format */
+    err = AudioStreamSetProperty( i_stream_id, 0, 0,
+                                  kAudioStreamPropertyPhysicalFormat,
+                                  sizeof( AudioStreamBasicDescription ),
+                                  &change_format ); 
+    if( err != noErr )
+    {
+        VVDBUG(( "could not set the stream format: [%d]", err ));
+        //msg_Err( p_aout, "could not set the stream format: [%4.4s]", (char *)&err );
+        return FALSE;
+    }
+
+    /* The AudioStreamSetProperty is not only asynchronious (requiring the locks)
+     * it is also not Atomic, in it's behaviour.
+     * Therefore we check 5 times before we really give up.
+     * FIXME: failing isn't actually implemented yet. */
+    for( i = 0; i < 5; i++ )
+    {
+        AudioStreamBasicDescription actual_format;
+
+        gettimeofday( &now, NULL );
+        timeout.tv_sec = now.tv_sec;
+        timeout.tv_nsec = (now.tv_usec + 500000) * 1000;
+
+        if( pthread_cond_timedwait( &w.cond, &w.lock, &timeout ) )
+        {
+            VVDBUG(( "reached timeout for getting stream format change in AudioStreamChangeFormat() \n" ));
+        }
+
+        i_param_size = sizeof( AudioStreamBasicDescription );
+        err = AudioStreamGetProperty( i_stream_id, 0,
+                                      kAudioStreamPropertyPhysicalFormat,
+                                      &i_param_size, 
+                                      &actual_format );
+
+        //msg_Dbg( p_aout, STREAM_FORMAT_MSG( "actual format in use: ", actual_format ) );
+        if( actual_format.mSampleRate == change_format.mSampleRate &&
+            actual_format.mFormatID == change_format.mFormatID &&
+            actual_format.mFramesPerPacket == change_format.mFramesPerPacket )
+        {
+            /* The right format is now active */
+            break;
+        }
+        /* We need to check again */
+    }
+    
+    /* Removing the property listener */
+    err = AudioStreamRemovePropertyListener( i_stream_id, 0,
+                                             kAudioStreamPropertyPhysicalFormat,
+                                             StreamListener );
+    if( err != noErr )
+    {
+        VVDBUG(( "AudioStreamRemovePropertyListener failed: [%4.4s]", (char *)&err ));
+        //msg_Err( p_aout, "AudioStreamRemovePropertyListener failed: [%4.4s]", (char *)&err );
+        return FALSE;
+    }
+    
+    /* Destroy the lock and condition */
+    pthread_mutex_unlock( &w.lock );
+    pthread_mutex_destroy( &w.lock );
+    pthread_cond_destroy( &w.cond );
+    
+    return TRUE;
+}
+
+
+/*
+ * Setup a encoded digital stream (SPDIF)
+ */
+static PaError OpenAndSetupOneRawStream(
+                                         const PaMacCoreStream *stream,
+                                         AudioDeviceID outDevice,
+                                         const double sampleRate
+                                        )
+{
+    /* this is a port from VLC auhal.c by "Brandon L. Golm" <br@ndon.com> */
+
+    bool attached_io_proc = FALSE;
+    /* for error handling */
+    OSStatus result = noErr;
+    int line = 0;
+    PaError paResult = paNoError;
+
+    AudioStreamID *p_streams = NULL; /* fn tmp */
+    UInt32 i_param_size = 0;
+    int i_streams    = 0;
+    Boolean b_writeable = FALSE;
+    UInt32 b_mix     = FALSE;
+    PaMacCoreRawStream *raw_stream;
+    raw_stream = stream->raw_stream;
+
+    pid_t mypid = getpid();
+
+    /* -- prepare a little error handling logic / hackery -- */
+    #define ERR_WRAP(mac_err) do { result = mac_err ; line = __LINE__ ; if ( result != noErr ) goto error ; } while(0)
+
+    /* Check if the desired device is alive and usable */
+    /* TODO: add a callback to the device to alert us if the device dies */
+    int b_alive = FALSE;
+    i_param_size = sizeof( b_alive );
+    ERR_WRAP( AudioDeviceGetProperty(outDevice, 0, FALSE,
+                                     kAudioDevicePropertyDeviceIsAlive,
+                                     &i_param_size, &b_alive ) );
+    //if (result != noErr) return "could not get audio device status";
+    if (0 == b_alive)
+    {
+      paResult = paDeviceUnavailable;
+      goto error;
+    }
+    //if (0 == b_alive)    return "selected audio device is not alive";
+
+
+    // from vlc's Open()
+    i_param_size = sizeof( mypid );
+    result = AudioDeviceGetProperty( outDevice, 0, FALSE,
+                                     kAudioDevicePropertyHogMode,
+                                     &i_param_size, &mypid ); // ??? blg
+
+    if( result != noErr )
+    {
+        /* This is not a fatal error. Some drivers simply don't support this property */
+        VDBUG(( "could not check whether device is hogged: %4.4s\n", (char *)&result ));
+        raw_stream->hog_pid = -1;
+    }
+
+    if( raw_stream->hog_pid != -1 && raw_stream->hog_pid != mypid )
+    {
+        VDBUG(( "Selected audio device is exclusively in use by another program.\n" ));
+        paResult = paDeviceUnavailable;
+        goto error;
+    }
+
+    // from vlc's OpenSPDIF()
+    /* Hog the device */
+    i_param_size = sizeof( mypid );
+
+    ERR_WRAP( AudioDeviceSetProperty( outDevice, 0, 0, FALSE,
+                                      kAudioDevicePropertyHogMode, i_param_size, &mypid ) );
+    raw_stream->hog_pid = mypid;
+
+    /*
+     * turn off mix-mode
+     */
+
+    /* Set mixable to false if we are allowed to */
+    result = AudioDeviceGetPropertyInfo( outDevice, 0, FALSE, kAudioDevicePropertySupportsMixing,
+                                         &i_param_size, &b_writeable );
+
+    /* vlc throws away the previous err/result */
+    result = AudioDeviceGetProperty( outDevice, 0, FALSE, kAudioDevicePropertySupportsMixing,
+                                     &i_param_size, &b_mix );
+
+    if( !result && b_writeable )
+    {
+        b_mix = 0;
+        result = AudioDeviceSetProperty( outDevice, 0, 0, FALSE,
+                                         kAudioDevicePropertySupportsMixing,
+                                         i_param_size, &b_mix );
+        raw_stream->changed_mixing = TRUE;
+    }
+
+    /*
+     * prepare to find all the streams on this device, then find the right stream for ac3 delivery
+     */
+
+
+    /* Get a list of all the streams on this device */
+    ERR_WRAP( AudioDeviceGetPropertyInfo( outDevice, 0, FALSE,
+                                          kAudioDevicePropertyStreams,
+                                          &i_param_size, NULL ) );
+    // msg_Err( p_aout, "could not get number of streams: [%4.4s]", (char *)&err );
+
+    i_streams = i_param_size / sizeof( AudioStreamID );
+    p_streams = (AudioStreamID *)malloc( i_param_size );
+    if( p_streams == NULL )
+    {
+        paResult = paInsufficientMemory;
+        goto error;
+    }
+    result = AudioDeviceGetProperty( outDevice, 0, FALSE,
+                                     kAudioDevicePropertyStreams,
+                                     &i_param_size, p_streams );
+    if( result != noErr )
+    {
+        if( p_streams ) free( p_streams );
+        goto error;
+        // msg_Err( p_aout, "could not get number of streams: [%4.4s]", (char *)&err );
+    }
+
+    {
+      int i;
+      int i_stream_index = -1;
+      AudioStreamBasicDescription *p_format_list = NULL;
+
+      for( i = 0; i < i_streams && i_stream_index < 0 ; i++ )
+      {
+        /* Find a stream with a cac3 stream */ 
+        p_format_list = NULL;
+        bool b_digital = FALSE;
+        int          j = 0;
+        int  i_formats = 0;
+
+        /* Retrieve all the stream formats supported by each output stream */
+        ERR_WRAP( AudioStreamGetPropertyInfo( p_streams[i], 0,
+                                              kAudioStreamPropertyPhysicalFormats,
+                                              &i_param_size, NULL ) );
+
+        i_formats = i_param_size / sizeof( AudioStreamBasicDescription );
+        p_format_list = (AudioStreamBasicDescription *)malloc( i_param_size );
+        if( p_format_list == NULL )
+        {
+          paResult = paInsufficientMemory;
+          goto error;
+          // return ERR( "could not allocate memory for kAudioStreamPropertyPhysicalFormats" );
+        }
+        // vlc does "continue;" here
+
+        result = AudioStreamGetProperty( p_streams[i], 0,
+                                         kAudioStreamPropertyPhysicalFormats,
+                                         &i_param_size, p_format_list );
+        if( result != noErr )
+        {
+          if( p_format_list) free( p_format_list);
+          goto error;
+          //msg_Err( p_aout, "could not get the list of streamformats: [%4.4s]", (char *)&err );
+          // vlc does "continue;" here
+        }
+
+        /* Check if one of the supported formats is a digital format */
+        for( j = 0; j < i_formats; j++ )
+        {
+            if( p_format_list[j].mFormatID == 'IAC3' ||
+                p_format_list[j].mFormatID == kAudioFormat60958AC3 )
+            {
+                b_digital = TRUE;
+                break;
+            }
+        }
+
+        if( b_digital )
+        {
+          /* if this stream supports a digital (cac3) format, then go set it. */
+          int i_requested_rate_format = -1;
+          int i_current_rate_format   = -1;
+          int i_backup_rate_format    = -1;
+
+          /* blg */
+          raw_stream->i_stream_id    = p_streams[i];
+          raw_stream->i_stream_index = i;
+
+          if( raw_stream->b_revert == FALSE )
+          {
+            /* Retrieve the original format of this stream first if not done so already */
+            i_param_size = sizeof( raw_stream->sfmt_revert );
+            ERR_WRAP( AudioStreamGetProperty( raw_stream->i_stream_id, 0,
+                                              kAudioStreamPropertyPhysicalFormat,
+                                              &i_param_size,
+                                              &raw_stream->sfmt_revert ) );
+            // msg_Err( p_aout, "could not retrieve the original streamformat: [%4.4s]", (char *)&err );
+            raw_stream->b_revert = TRUE;
+          }
+
+          // porting from vlc, not sure if our passed in sampleRate is a good substitute for
+          // the minimum rate that vlc compares against.
+
+          /*
+           * this looks for a format that is what we are requesting and breaks (if it finds a
+           * format that is the same as the one we have now it saves that too).
+           * I'm not sure what the backup format is about.
+           */
+          for( j = 0; j < i_formats; j++ )
+          {
+            if( p_format_list[j].mFormatID == 'IAC3' ||
+                p_format_list[j].mFormatID == kAudioFormat60958AC3 )
+            {
+              if( p_format_list[j].mSampleRate == sampleRate )
+              {
+                i_requested_rate_format = j;
+                break;
+              }
+              else if( p_format_list[j].mSampleRate == raw_stream->sfmt_revert.mSampleRate )
+              {
+                i_current_rate_format = j;
+              }
+              else
+              {
+                if( i_backup_rate_format < 0 ||
+                    p_format_list[j].mSampleRate > p_format_list[i_backup_rate_format].mSampleRate )
+                  i_backup_rate_format = j;
+              }
+            }
+          }
+
+          /*
+           * We prefer to output at the samplerate of the original audio
+           * If not possible, we will try to use the current samplerate of the device
+           * And if we have to, any digital format will be just fine (highest rate possible)
+           */
+          if( i_requested_rate_format >= 0 )
+            raw_stream->stream_format = p_format_list[i_requested_rate_format];
+          else if( i_current_rate_format >= 0 )
+            raw_stream->stream_format = p_format_list[i_current_rate_format];
+          else
+            raw_stream->stream_format = p_format_list[i_backup_rate_format];
+          }
+      }
+      if( p_format_list) free( p_format_list);
+      if( p_streams ) free( p_streams );
+    }
+
+    if (! AudioStreamChangeFormat(raw_stream->i_stream_id, raw_stream->stream_format) ) {
+      VVDBUG(("AudioStreamChangeFormat failed\n"));
+      goto error;
+    }
+    
+    ERR_WRAP( AudioDeviceAddIOProc( outDevice,
+                                    (AudioDeviceIOProc)RenderCallbackSPDIF,
+                                    (void *) stream ) );
+    attached_io_proc = TRUE;
+
+    /*
+     * Start the device
+     */
+    ERR_WRAP( AudioDeviceStart( outDevice,
+                                (AudioDeviceIOProc)RenderCallbackSPDIF ) );
+
+    #undef ERR_WRAP
+    return paNoError;
+
+  error:
+    if( p_streams ) free( p_streams );
+    if (attached_io_proc)
+        AudioDeviceRemoveIOProc( outDevice, (AudioDeviceIOProc)RenderCallbackSPDIF );
+    if( result )
+      return PaMacCore_SetError( result, line, 1 );
+    return paResult;
+}
+
+
+
+/*****************************************************************************
+ * RenderCallbackSPDIF: callback for SPDIF audio output
+ *****************************************************************************/
+static OSStatus RenderCallbackSPDIF( AudioDeviceID inDevice,
+                                    const AudioTimeStamp * inNow,
+                                    const void * inInputData,
+                                    const AudioTimeStamp * inInputTime,
+                                    AudioBufferList * outOutputData,
+                                    const AudioTimeStamp * inOutputTime,
+                                    void * threadGlobals )
+{                       
+    AudioTimeStamp currentTime;
+
+    PaStreamCallbackTimeInfo timeInfo = {0,0,0};
+    unsigned long framesProcessed     = 0;
+    int callbackResult                = paContinue ;
+    unsigned long frames; /* a number to tell the buffer processor */
+    UInt16 frame_size;
+
+    PaMacCoreStream *stream = (PaMacCoreStream *)threadGlobals;
+    
+    //aout_buffer_t * p_buffer;
+    //mtime_t         current_date;
+    //aout_instance_t * p_aout = (aout_instance_t *)threadGlobals;
+
+
+    timeInfo.outputBufferDacTime = TimeStampToSecs(stream, inNow); //inOutputTime); // last param right?
+    AudioDeviceGetCurrentTime(stream->outputDevice, &currentTime);
+    timeInfo.currentTime = TimeStampToSecs(stream, &currentTime);
+
+    int xrunFlags = stream->xrunFlags;
+    if( stream->state == STOPPING || stream->state == CALLBACK_STOPPED ) xrunFlags = 0;
+
+    /* -- start processing -- */
+    PaUtil_BeginBufferProcessing( &(stream->bufferProcessor),
+                                  &timeInfo,
+                                  xrunFlags );
+    stream->xrunFlags = 0; /* FEEDBACK: we only send flags to Buf Proc once */
+
+    frames = outOutputData->mBuffers[0].mDataByteSize;
+    frames /= sizeof( float ) * outOutputData->mBuffers[0].mNumberChannels;
+
+    // assert( ioData->mBuffers[0].mNumberChannels == stream->userOutChan );
+    /* Tel the buffer processor how many frames */
+    PaUtil_SetOutputFrameCount( &(stream->bufferProcessor), frames );
+
+    /* Provide the buffer processor with a pointer to the interleaved host output channel. */
+    PaUtil_SetInterleavedOutputChannels( &(stream->bufferProcessor),
+                                           0,
+                                           outOutputData->mBuffers[0].mData, 2);
+    framesProcessed = PaUtil_EndBufferProcessing( &(stream->bufferProcessor),
+                                                  &callbackResult );
+
+
+    switch( callbackResult )
+    {
+        case paContinue: break;
+        case paComplete:
+        case paAbort:
+            stream->isTimeSet = FALSE;
+            stream->state = CALLBACK_STOPPED ;
+            AudioDeviceStop(stream->outputDevice, 
+                            (AudioDeviceIOProc)RenderCallbackSPDIF );
+            break;
+    }
+    return( noErr );
+}
+
+
 
 static PaError OpenAndSetupOneAudioUnit(
                                    const PaMacCoreStream *stream,
@@ -1342,6 +1821,7 @@ static PaError OpenStream( struct PaUtilHostApiRepresentation *hostApi,
     stream->inputFramesPerBuffer = 0;
     stream->outputFramesPerBuffer = 0;
     stream->bufferProcessorIsInitialized = FALSE;
+    stream->raw_stream = NULL;
 
     /* assert( streamCallback ) ; */ /* only callback mode is implemented */
     if( streamCallback )
@@ -1453,36 +1933,87 @@ static PaError OpenStream( struct PaUtilHostApiRepresentation *hostApi,
     { /* full duplex, different devices OR simplex */
        UInt32 outputFramesPerBuffer = (UInt32) stream->outputFramesPerBuffer;
        UInt32 inputFramesPerBuffer  = (UInt32) stream->inputFramesPerBuffer;
-       result = OpenAndSetupOneAudioUnit( stream,
-                                          NULL,
-                                          outputParameters,
-                                          framesPerBuffer,
-                                          NULL,
-                                          &outputFramesPerBuffer,
-                                          auhalHostApi,
-                                          &(stream->outputUnit),
-                                          NULL,
-                                          &(stream->outputDevice),
-                                          sampleRate,
-                                          stream );
-       if( result != paNoError )
-           goto error;
-       result = OpenAndSetupOneAudioUnit( stream,
-                                          inputParameters,
-                                          NULL,
-                                          framesPerBuffer,
-                                          &inputFramesPerBuffer,
-                                          NULL,
-                                          auhalHostApi,
-                                          &(stream->inputUnit),
-                                          &(stream->inputSRConverter),
-                                          &(stream->inputDevice),
-                                          sampleRate,
-                                          stream );
-       if( result != paNoError )
-           goto error;
-       stream->inputFramesPerBuffer = inputFramesPerBuffer;
-       stream->outputFramesPerBuffer = outputFramesPerBuffer;
+       bool raw_mode=FALSE;
+       int macOutputStreamFlags;
+       PaMacCoreStreamInfo *hostApiSpecificStreamInfo=NULL;
+       VVDBUG(("output parameters: %ld\n", outputParameters));
+       VVDBUG(("hostapidspec:  %ld\n", outputParameters->hostApiSpecificStreamInfo));
+       hostApiSpecificStreamInfo=outputParameters->hostApiSpecificStreamInfo;
+       if (hostApiSpecificStreamInfo)
+       {
+         macOutputStreamFlags=
+                ((PaMacCoreStreamInfo*)outputParameters->hostApiSpecificStreamInfo)
+                                  ->flags;
+
+         VVDBUG(("testing flags: %d\n", macOutputStreamFlags));
+         raw_mode = macOutputStreamFlags & paMacCoreFlagRaw != 0;
+         VVDBUG(("the raw mode: %d\n", raw_mode));
+       }
+       if ( raw_mode )
+       {
+         AudioDeviceID outDevice;
+         PaMacCoreRawStream *raw_stream =
+             (PaMacCoreRawStream*)PaUtil_AllocateMemory( sizeof(PaMacCoreRawStream) );
+         if( NULL == raw_stream )
+         {
+             result = paInsufficientMemory;
+             goto error;
+         }
+         raw_stream->hog_pid = -1;
+         raw_stream->changed_mixing = FALSE;
+         raw_stream->b_revert       = FALSE;
+
+         VVDBUG(("raw mode output PA device is: %d\n", outputParameters->device));
+
+         outDevice = auhalHostApi->devIds[outputParameters->device];
+         VVDBUG(("raw mode output device is: %d\n", outDevice));
+
+         /* only supports output */
+         stream->raw_stream = raw_stream;
+         stream->outputDevice = outDevice;
+         //stream->outputFramesPerBuffer = outputFramesPerBuffer = 768;
+
+         result = OpenAndSetupOneRawStream( stream,
+                                            outDevice,
+                                            sampleRate ); //blg
+         /* start by only supporting blio mode */
+         inputChannelCount = 0;
+       }
+       else
+       {
+
+         result = OpenAndSetupOneAudioUnit( stream,
+                                            NULL,
+                                            outputParameters,
+                                            framesPerBuffer,
+                                            NULL,
+                                            &outputFramesPerBuffer,
+                                            auhalHostApi,
+                                            &(stream->outputUnit),
+                                            NULL,
+                                            &(stream->outputDevice),
+                                            sampleRate,
+                                            stream );
+         VVDBUG(("analog output device is: %d\n", stream->outputDevice));
+         if( result != paNoError )
+             goto error;
+         result = OpenAndSetupOneAudioUnit( stream,
+                                            inputParameters,
+                                            NULL,
+                                            framesPerBuffer,
+                                            &inputFramesPerBuffer,
+                                            NULL,
+                                            auhalHostApi,
+                                            &(stream->inputUnit),
+                                            &(stream->inputSRConverter),
+                                            &(stream->inputDevice),
+                                            sampleRate,
+                                            stream );
+         if( result != paNoError )
+             goto error;
+         stream->inputFramesPerBuffer = inputFramesPerBuffer;
+         stream->outputFramesPerBuffer = outputFramesPerBuffer;
+      }
     }
 
     if( stream->inputUnit ) {
@@ -1555,6 +2086,7 @@ static PaError OpenStream( struct PaUtilHostApiRepresentation *hostApi,
                                          stream->inputFramesPerBuffer,
                                          stream->outputFramesPerBuffer,
                                          sampleRate );
+        printf("ringSize: %d\n", ringSize);
        result = initializeBlioRingBuffers( &stream->blio,
               inputParameters?inputParameters->sampleFormat:0 ,
               outputParameters?outputParameters->sampleFormat:0 ,
@@ -1606,7 +2138,7 @@ static PaError OpenStream( struct PaUtilHostApiRepresentation *hostApi,
 
     stream->sampleRate  = sampleRate;
     stream->outDeviceSampleRate = 0;
-    if( stream->outputUnit ) {
+    if( stream->outputUnit || stream->raw_stream ) {
        Float64 rate;
        UInt32 size = sizeof( rate );
        result = ERR( AudioDeviceGetProperty( stream->outputDevice,
@@ -1639,6 +2171,18 @@ static PaError OpenStream( struct PaUtilHostApiRepresentation *hostApi,
     stream->xrunFlags = 0;
 
     *s = (PaStream*)stream;
+
+#ifndef CHANGE_FORMAT
+    if( stream->raw_stream ) /* do this last! */
+    {
+        if (! AudioStreamChangeFormat(stream->raw_stream->i_stream_id, stream->raw_stream->stream_format) )
+        {
+          /// baaaaad
+          VVDBUG(("AudioStreamChangeFormat failed\n"));
+          goto error;
+        }
+    }
+#endif
 
     return result;
 
@@ -2175,6 +2719,61 @@ static PaError CloseStream( PaStream* s )
        if( stream->bufferProcessorIsInitialized )
           PaUtil_TerminateBufferProcessor( &stream->bufferProcessor );
        PaUtil_TerminateStreamRepresentation( &stream->streamRepresentation );
+
+       /* undo the raw_stream (for ac3) stuff */
+       if (stream->raw_stream)
+       {
+           UInt32 i_param_size;
+           AudioDeviceRemoveIOProc( stream->outputDevice, (AudioDeviceIOProc)RenderCallbackSPDIF );
+           if( stream->raw_stream->hog_pid == getpid() )
+           {                          
+               int newhog = -1;
+               i_param_size = sizeof( newhog );
+               result = AudioDeviceSetProperty( stream->outputDevice, 0, 0, FALSE,
+                                                kAudioDevicePropertyHogMode, i_param_size, &newhog );
+               // if( err != noErr ) msg_Err( p_aout, "Could not release hogmode: [%4.4s]", (char *)&err );
+               if ( result != noErr )
+               {
+                   VVDBUG(("could not release hogmode, OSStatus: %d", result));
+               }
+               else
+               {
+                   VVDBUG(("hogmode released\n"));
+                   stream->raw_stream->hog_pid = -1;
+               }
+           }   
+#ifndef CHANGE_FORMAT
+           if( stream->raw_stream->b_revert == TRUE )
+           {
+               if (AudioStreamChangeFormat(stream->raw_stream->i_stream_id, stream->raw_stream->sfmt_revert) ) {
+                   VVDBUG(("AudioStreamChangeFormat reverted\n"));
+               }
+               else
+               {
+                   /// baaaaad
+                   VVDBUG(("AudioStreamChangeFormat revert failed\n"));
+               }
+           }
+#endif
+           if( stream->raw_stream->changed_mixing && stream->raw_stream->sfmt_revert.mFormatID != kAudioFormat60958AC3 )
+           {
+               int b_mix;
+               Boolean b_writeable;
+               /* Revert mixable to true if we are allowed to */
+               result = AudioDeviceGetPropertyInfo( stream->outputDevice, 0, FALSE, kAudioDevicePropertySupportsMixing,
+                                                    &i_param_size, &b_writeable );
+               result = AudioDeviceGetProperty( stream->outputDevice, 0, FALSE, kAudioDevicePropertySupportsMixing,
+                                                &i_param_size, &b_mix );
+              if( !result && b_writeable && 0 == b_mix )
+              {
+                  b_mix = 1;
+                  result = AudioDeviceSetProperty( stream->outputDevice, 0, 0, FALSE,
+                                                   kAudioDevicePropertySupportsMixing, i_param_size, &b_mix );
+              }
+           }
+           free( stream->raw_stream );
+       }
+
        PaUtil_FreeMemory( stream );
     }
 
@@ -2202,6 +2801,10 @@ static PaError StartStream( PaStream *s )
     }
     if( stream->outputUnit && stream->outputUnit != stream->inputUnit ) {
        ERR_WRAP( AudioOutputUnitStart(stream->outputUnit) );
+    }
+    if( stream->raw_stream ) {
+        ERR_WRAP( AudioDeviceStart(stream->outputDevice, 
+                                   (AudioDeviceIOProc)RenderCallbackSPDIF ) );
     }
 
     //setStreamStartTime( stream );
@@ -2276,6 +2879,10 @@ static PaError StopStream( PaStream *s )
           PaUtil_AdvanceRingBufferWriteIndex( &stream->inputRingBuffer,
                                               stream->inputRingBuffer.bufferSize
                                               / RING_BUFFER_ADVANCE_DENOMINATOR );
+    }
+    if( stream->raw_stream ) {
+        ERR_WRAP( AudioDeviceStop(stream->outputDevice, 
+                                  (AudioDeviceIOProc)RenderCallbackSPDIF ) );
     }
 
     stream->xrunFlags = 0;

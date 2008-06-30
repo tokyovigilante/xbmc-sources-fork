@@ -470,14 +470,14 @@ s,@CPPFLAGS@,,;t t
 s,@ac_ct_CC@,gcc,;t t
 s,@EXEEXT@,,;t t
 s,@OBJEXT@,o,;t t
-s,@build@,i686-apple-darwin9.1.0,;t t
+s,@build@,i686-apple-darwin9.2.0,;t t
 s,@build_cpu@,i686,;t t
 s,@build_vendor@,apple,;t t
-s,@build_os@,darwin9.1.0,;t t
-s,@host@,i686-apple-darwin9.1.0,;t t
+s,@build_os@,darwin9.2.0,;t t
+s,@host@,i686-apple-darwin9.2.0,;t t
 s,@host_cpu@,i686,;t t
 s,@host_vendor@,apple,;t t
-s,@host_os@,darwin9.1.0,;t t
+s,@host_os@,darwin9.2.0,;t t
 s,@EGREP@,grep -E,;t t
 s,@LN_S@,ln -s,;t t
 s,@ECHO@,/bin/echo,;t t

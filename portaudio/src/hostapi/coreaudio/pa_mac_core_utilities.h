@@ -92,9 +92,9 @@
 #endif
 
 /* Verbose Debugging: useful for developement */
-/*
+
 #define MAC_CORE_VERBOSE_DEBUG
-*/
+
 #ifdef MAC_CORE_VERBOSE_DEBUG
 # define VDBUG(MSG) do { printf("||PaMacCore (v )|| "); printf MSG ; fflush(stdout); } while(0)
 #else

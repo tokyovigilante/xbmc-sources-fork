@@ -113,6 +113,19 @@ typedef struct
 PaMacAUHAL;
 
 
+/* stream data structure specifically for raw implementation */
+typedef struct PaMacCoreRawStream
+{
+    AudioStreamID               i_stream_id;    /* The StreamID that has a cac3 streamformat */
+    int                         i_stream_index; /* The index of i_stream_id in an AudioBufferList */
+    AudioStreamBasicDescription stream_format;  /* The format we changed the stream to */
+    AudioStreamBasicDescription sfmt_revert;    /* The original format of the stream */
+    bool                        b_revert;       /* Whether we need to revert the stream format */
+    bool                        changed_mixing; /* Whether we need to revert the stream's mix-mode */
+    short                       hog_pid;        /* the pid of this process that hogged the device, or -1 if we couldn't */
+}
+PaMacCoreRawStream;
+
 
 /* stream data structure specifically for this implementation */
 typedef struct PaMacCoreStream
@@ -158,7 +171,9 @@ typedef struct PaMacCoreStream
     //these may be different from the stream sample rate due to SR conversion:
     double outDeviceSampleRate;
     double inDeviceSampleRate;
+    PaMacCoreRawStream *raw_stream;
 }
 PaMacCoreStream;
+
 
 #endif /* PA_MAC_CORE_INTERNAL_H__ */
