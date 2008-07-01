@@ -102,9 +102,9 @@
 #endif
 
 /* Very Verbose Debugging: Traces every call. */
-/*
+
 #define MAC_CORE_VERY_VERBOSE_DEBUG
- */
+
 #ifdef MAC_CORE_VERY_VERBOSE_DEBUG
 # define VVDBUG(MSG) do { printf("||PaMacCore (vv)|| "); printf MSG ; fflush(stdout); } while(0)
 #else

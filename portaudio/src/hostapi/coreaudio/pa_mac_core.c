@@ -1088,13 +1088,13 @@ static PaError OpenAndSetupOneRawStream(
         for( j = 0; j < i_formats; j++ )
         {
             if( p_format_list[j].mFormatID == 'IAC3' ||
-                p_format_list[j].mFormatID == kAudioFormat60958AC3 )
+            	p_format_list[j].mFormatID == kAudioFormat60958AC3 )
             {
                 b_digital = TRUE;
                 break;
             }
         }
-
+		
         if( b_digital )
         {
           /* if this stream supports a digital (cac3) format, then go set it. */
@@ -1723,7 +1723,7 @@ static PaError OpenStream( struct PaUtilHostApiRepresentation *hostApi,
                            PaStreamCallback *streamCallback,
                            void *userData )
 {
-    PaError result = paNoError;
+`    PaError result = paNoError;
     PaMacAUHAL *auhalHostApi = (PaMacAUHAL*)hostApi;
     PaMacCoreStream *stream = 0;
     int inputChannelCount, outputChannelCount;
@@ -1938,15 +1938,13 @@ static PaError OpenStream( struct PaUtilHostApiRepresentation *hostApi,
        PaMacCoreStreamInfo *hostApiSpecificStreamInfo=NULL;
        VVDBUG(("output parameters: %ld\n", outputParameters));
        VVDBUG(("hostapidspec:  %ld\n", outputParameters->hostApiSpecificStreamInfo));
-       hostApiSpecificStreamInfo=outputParameters->hostApiSpecificStreamInfo;
+       hostApiSpecificStreamInfo = outputParameters->hostApiSpecificStreamInfo;
        if (hostApiSpecificStreamInfo)
        {
-         macOutputStreamFlags=
-                ((PaMacCoreStreamInfo*)outputParameters->hostApiSpecificStreamInfo)
-                                  ->flags;
+         macOutputStreamFlags = ((PaMacCoreStreamInfo*)outputParameters->hostApiSpecificStreamInfo)->flags;
 
          VVDBUG(("testing flags: %d\n", macOutputStreamFlags));
-         raw_mode = macOutputStreamFlags & paMacCoreFlagRaw != 0;
+         raw_mode = macOutputStreamFlags & paMacCoreFlagRaw;
          VVDBUG(("the raw mode: %d\n", raw_mode));
        }
        if ( raw_mode )
