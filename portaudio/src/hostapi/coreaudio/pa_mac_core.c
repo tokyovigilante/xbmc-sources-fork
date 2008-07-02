@@ -1723,7 +1723,7 @@ static PaError OpenStream( struct PaUtilHostApiRepresentation *hostApi,
                            PaStreamCallback *streamCallback,
                            void *userData )
 {
-`    PaError result = paNoError;
+    PaError result = paNoError;
     PaMacAUHAL *auhalHostApi = (PaMacAUHAL*)hostApi;
     PaMacCoreStream *stream = 0;
     int inputChannelCount, outputChannelCount;
