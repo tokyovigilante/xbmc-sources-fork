@@ -3,7 +3,7 @@
 
 /* Define if you want to use libfaad together with Digital Radio Mondiale
    (DRM) */
-#define DRM 1
+/* #undef DRM */
 
 /* Define to 1 if you have the <dlfcn.h> header file. */
 #define HAVE_DLFCN_H 1
@@ -15,7 +15,7 @@
 #define HAVE_FLOAT_H 1
 
 /* Define if needed */
-#define HAVE_FPOS_T_POS 1
+/* #undef HAVE_FPOS_T_POS */
 
 /* Define to 1 if you have the <inttypes.h> header file. */
 #define HAVE_INTTYPES_H 1
@@ -95,9 +95,13 @@
 /* Version number of package */
 #define VERSION "2.0"
 
-/* Define to 1 if your processor stores words with the most significant byte
-   first (like Motorola and SPARC, unlike Intel and VAX). */
-/* #undef WORDS_BIGENDIAN */
+/* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
+   significant byte first (like Motorola and SPARC, unlike Intel and VAX). */
+#if defined __BIG_ENDIAN__
+# define WORDS_BIGENDIAN 1
+#elif ! defined __LITTLE_ENDIAN__
+/* # undef WORDS_BIGENDIAN */
+#endif
 
 /* Define to `__inline__' or `__inline' if that's what the C compiler
    calls it, or to nothing if 'inline' is not supported under any name.  */

@@ -344,7 +344,7 @@ char *strchr(), *strrchr();
 #  define __USE_ISOC99   1
 #endif
 
-    #include <math.h>
+//    #include <math.h>
 
 #ifdef HAVE_SINF
 #  define sin sinf
